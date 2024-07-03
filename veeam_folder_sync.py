@@ -63,7 +63,8 @@ class SyncHandler(FileSystemEventHandler):
             # event.is_directory works strangely here. Even tho the event is triggered when a folder is deleted, a file event handler is passed
             if os.path.isdir(dst_path):
                 logger.info(f"DELETE: Folder in {event.src_path} was deleted, updating synced folder {dst_path}")
-                rmtree(dst_path)
+                delete_folder(dst_path)
+                # rmtree(dst_path)
             else:
                 logger.info(f"DELETE: File in {event.src_path} was deleted, updating synced folder {dst_path}")
                 os.remove(dst_path)
@@ -107,7 +108,6 @@ def is_same_file(src: str, dst: str):
     src_stat = os.stat(src)
     dst_stat = os.stat(dst)
     if src_stat.st_size != dst_stat.st_size or src_stat.st_mtime != dst_stat.st_mtime:
-        logging.info("STAT")
         return False
 
     return checksum(src) == checksum(dst)
@@ -124,6 +124,22 @@ def copy_wrapper(src: str, dst: str) -> None:
     logger.info(f"COPY: file: {src} to {dst}")
     copy2(src, dst)
     copystat(src, dst)
+
+def delete_folder(path_to_delete: str) -> None:
+    try:
+        items = os.listdir(path_to_delete)
+        for item in items:
+            dst_path = os.path.join(path_to_delete, item)
+            if os.path.isdir(dst_path):
+                logger.info(f"DELETE: File deleted {dst_path}")
+                delete_folder(dst_path)
+            else:
+                logger.info(f"DELETE: File deleted {dst_path}")
+                os.remove(dst_path)
+        rmtree(path_to_delete)
+
+    except FileNotFoundError:
+        logging.error("FileNotFoundError")
 
 def sync_folder(src: str, dst: str) -> None:
     if not os.path.exists(dst):
@@ -143,7 +159,7 @@ def sync_folder(src: str, dst: str) -> None:
                 copy_wrapper(src_path, dst_path)
 
     except FileNotFoundError:
-        pass
+        logging.error("FileNotFoundError")
 
 if __name__ == "__main__":
 
