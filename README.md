@@ -2,7 +2,7 @@
 
 Example call:
 
-`python .\veeam_folder_sync.py -s "path_of_source_folder" -d "path_of_destination_folder" -si 300 -l l.log`  
+`python .\folder_sync.py -s "path_of_source_folder" -d "path_of_destination_folder" -si 300 -l l.log`  
 
 
 `'-s', '--source_path', type=str`  
