@@ -107,6 +107,7 @@ def is_same_file(src: str, dst: str):
     src_stat = os.stat(src)
     dst_stat = os.stat(dst)
     if src_stat.st_size != dst_stat.st_size or src_stat.st_mtime != dst_stat.st_mtime:
+        logging.info("STAT")
         return False
 
     return checksum(src) == checksum(dst)
