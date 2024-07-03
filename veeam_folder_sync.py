@@ -98,14 +98,6 @@ def checksum(filename: str) -> bytes:
             if not chunk:
                 break
             hash_obj.update(chunk)
-    #         processed_size += len(chunk)
-            
-    #         percent = int((processed_size / file_size) * 100)
-    #         if percent > last_percent:
-    #             print(f"Processing: {percent}% complete", end='\r')
-    #             last_percent = percent
-
-    # print("Processing: 100% complete")
     return hash_obj.hexdigest()
 
 def is_same_file(src: str, dst: str):
