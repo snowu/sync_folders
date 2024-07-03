@@ -162,7 +162,7 @@ if __name__ == "__main__":
     logger.addHandler(file_handler)
 
     if original_src == original_dst:
-        logger.error(f"Same path passed in arguments: {src} == {dst}")
+        logger.error(f"Same path passed in arguments: {original_src} == {original_dst}")
     elif src_path == dst_path:
         logger.error(f"Destination folder will be inside source folder: {src_path} == {dst_path}")
     else:
