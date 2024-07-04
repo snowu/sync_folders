@@ -146,15 +146,19 @@ def file_checksum(filename: str) -> bytes:
 
 def dir_checksum(directory):
     hash_obj = hashlib.sha256()
+    chunk_size = 8192
+    total_size = 0
     for root, _, files in os.walk(directory):
         for file in files:
             file_path = os.path.join(root, file)
+            total_size += os.path.getsize(file_path)
             with open(file_path, 'rb') as f:
                 while True:
-                    chunk = f.read(4096)
+                    chunk = f.read(chunk_size)
                     if not chunk:
                         break
                     hash_obj.update(chunk)
+    logger.info(f"CHECKSUM: {directory} : {total_size}")
     return hash_obj.hexdigest()
 
 
