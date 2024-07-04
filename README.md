@@ -9,3 +9,6 @@ Example call:
 `'-d', '--destination_path', type=str`  
 `'-si', '--sync_interval', type=int`  
 `'-l', '--log_file', type=str`  
+
+Only `watchdog` and `schedule` external libraries are required.  
+`pip install requirements.ini` to install them.  
