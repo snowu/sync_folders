@@ -6,7 +6,8 @@ import logging
 from shutil import copy2, copystat, move
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from watchdog.observers import Observer
-# from threading import Timer
+from threading import Thread
+from time import sleep
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -35,7 +36,6 @@ class SyncHandler(FileSystemEventHandler):
         self.folder_to_monitor = folder_to_monitor
         self.folder_to_sync = folder_to_sync
 
-
     def join_paths(self, event: FileSystemEvent) -> os.path:
         if event.event_type == "moved":  
             src_rel_path = os.path.relpath(event.src_path, self.folder_to_monitor)
@@ -52,10 +52,10 @@ class SyncHandler(FileSystemEventHandler):
             dst_path = self.join_paths(event)
             if not os.path.exists(dst_path): 
                 if event.is_directory:
-                    import time; start = time.time()
                     sync_folder(event.src_path, dst_path)
-                    print(time.time() - start); breakpoint
                 else:
+                    import time
+                    time.sleep(0.01)
                     copy_wrapper(event.src_path, dst_path)
         except FileNotFoundError:
             logger.error(f"on_created: File {event.src_path} not found")
@@ -66,9 +66,7 @@ class SyncHandler(FileSystemEventHandler):
             dst_path = self.join_paths(event)
             # event.is_directory works strangely here. Even tho the event is triggered when a folder is deleted, a file event handler is passed
             if os.path.isdir(dst_path):
-                import time; start = time.time()
                 delete_folder(dst_path)
-                print(time.time() - start); breakpoint
             else:
                 delete_file(dst_path)
         except FileNotFoundError:
@@ -95,31 +93,39 @@ def delete_file(file_path):
     try:
         os.unlink(file_path)
         logger.info(f"DELETE: deleting file {file_path}")
+        # return file_path
     except Exception as e:
         logger.error(f"Error deleting file {file_path}: {e}")
 
 
 def delete_folder(path_to_delete: str) -> None:
+    # deleted_files = []
     try:
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
             for root, dirs, files in os.walk(path_to_delete, topdown=False):
                 for name in files:
                     file_path = os.path.join(root, name)
-                    futures.append(executor.submit(delete_file, file_path))
+                    if os.path.exists(file_path):
+                        futures.append(executor.submit(delete_file, file_path))
             
-            for future in futures:
-                future.result()
+                for future in futures:
+                    res = future.result()
+                    # if res:
+                        # deleted_files.append(res)
                 
-            for name in dirs:
-                dst_path = os.path.join(root, name)
-                try:
-                    os.rmdir(dst_path)
-                    logger.info(f"DELETE: deleting directory {dst_path}")
-                except Exception as e:
-                    logger.error(f"Error deleting directory {dst_path}: {e}")
-            
+                for name in dirs:
+                    dst_path = os.path.join(root, name)
+                    try:
+                        os.rmdir(dst_path)
+                        logger.info(f"DELETE: deleting directory {dst_path}")
+                    except Exception as e:
+                        logger.error(f"Error deleting directory {dst_path}: {e}")
+                
             os.rmdir(path_to_delete)
+
+        # if deleted_files:
+        #     logger.info(f"{'\n DELETE: deleted file: '.join(deleted_files)}")
 
     except Exception as e:
         logger.error(f"Error deleting folder {path_to_delete}: {e}")
@@ -192,34 +198,42 @@ def sync_folder(src: str, dst: str) -> None:
     except Exception as e:
         logger.error(f"Error in sync_folder: {e}")
 
+def run_periodic_task():
+    while True:
+        schedule.run_pending()
+        sleep(0.1)
+
 
 if __name__ == "__main__":
 
-    args = parser.parse_args()
-    src_path = args.source_path
-    dst_path = args.destination_path
-    dst_path = str(Path(args.destination_path).joinpath(Path(src_path).parts[-1]))
-    log_file = args.log_file
-    sync_interval = args.sync_interval
+    try:
+        args = parser.parse_args()
+        src_path = args.source_path
+        dst_path = args.destination_path
+        dst_path = str(Path(args.destination_path).joinpath(Path(src_path).parts[-1]))
+        log_file = args.log_file
+        sync_interval = args.sync_interval
 
-    file_handler= logging.FileHandler(log_file)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+        file_handler= logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
-    if src_path == dst_path:
-        logger.error(f"Same path passed in arguments: {src_path} == {dst_path}")
-    else:
-        event_handler = SyncHandler(src_path, dst_path)
-        observer.schedule(event_handler, src_path, recursive=True)
-        observer.start()
-        import time; start = time.time()
-        sync_folder(src_path, dst_path)
-        print(time.time() - start); breakpoint
-        schedule.every(sync_interval).seconds.do(sync_folder, src=src_path, dst=dst_path)
-        try:
+        if src_path == dst_path:
+            logger.error(f"Same path passed in arguments: {src_path} == {dst_path}")
+        else:
+            event_handler = SyncHandler(src_path, dst_path)
+            observer.schedule(event_handler, src_path, recursive=True)
+            observer.start()
+            sync_folder(src_path, dst_path)
+            schedule.every(sync_interval).seconds.do(sync_folder, src=src_path, dst=dst_path)
+
+            # Start a separate thread for running scheduled tasks
+            periodic_task_thread = Thread(target=run_periodic_task)
+            periodic_task_thread.daemon = True
+            periodic_task_thread.start()
             while True:
-                schedule.run_pending()
-                pass
-        except KeyboardInterrupt:
-            observer.stop()
+                sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    finally:
         observer.join()
