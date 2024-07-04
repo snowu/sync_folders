@@ -83,9 +83,9 @@ class SyncHandler(FileSystemEventHandler):
                     os.rename(old_dst_path, new_dst_path)
                     logger.info(f"MODIFY: Folder renamed from {old_dst_path} to {new_dst_path}")
                     return
-
-                move(old_dst_path, new_dst_path)
-                logger.info(f"MODIFY: File moved from {old_dst_path} to {new_dst_path}")
+                else:
+                    move(old_dst_path, new_dst_path)
+                    logger.info(f"MODIFY: File moved from {old_dst_path} to {new_dst_path}")
 
         except FileNotFoundError:
             logger.error(f"on_moved: File {event.src_path} not found")
@@ -195,10 +195,10 @@ def sync_folder(src: str, dst: str) -> None:
     except Exception as e:
         logger.error(f"Error in sync_folder: {e}")
 
-def run_periodic_task():
+def run_periodic_task(sync_interval):
     while True:
         schedule.run_pending()
-        sleep(0.1)
+        sleep(sync_interval)
 
 if __name__ == "__main__":
 
@@ -224,7 +224,7 @@ if __name__ == "__main__":
             schedule.every(sync_interval).seconds.do(sync_folder, src=src_path, dst=dst_path)
 
             # Start a separate thread for running scheduled tasks
-            periodic_task_thread = Thread(target=run_periodic_task)
+            periodic_task_thread = Thread(target=run_periodic_task, args=(sync_interval,))
             periodic_task_thread.daemon = True
             periodic_task_thread.start()
             while True:
