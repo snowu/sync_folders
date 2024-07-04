@@ -88,9 +88,6 @@ class SyncHandler(FileSystemEventHandler):
 
 def checksum(filename: str) -> bytes:
     hash_obj = hashlib.md5()
-    file_size = os.path.getsize(filename)
-    # processed_size = 0
-    # last_percent = 0
     chunk_size = 8192
 
     with open(filename, "rb") as f:
@@ -113,11 +110,7 @@ def is_same_file(src: str, dst: str):
     return checksum(src) == checksum(dst)
 
 def copy_wrapper(src: str, dst: str) -> None:
-    if os.path.exists(dst):
-        logger.info(f"SKIP: file {src} already present in {dst}")
-        return
-
-    if is_same_file(src, dst):
+    if os.path.exists(dst) or is_same_file(src, dst):
         logger.info(f"SKIP: file {src} already present in {dst}")
         return
 
@@ -173,7 +166,6 @@ if __name__ == "__main__":
     # So, if src = D:\original_folder_name and dst = D:\copy, the synced folder will be at path D:\copy\original_folder_name
     dst_path = Path(original_dst).joinpath(src_path.parts[-1])
 
-    # More logger config based on log_file
     file_handler= logging.FileHandler(log_file)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
