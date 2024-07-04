@@ -298,11 +298,7 @@ def init_sync() -> None:
             sleep(1)
     except KeyboardInterrupt:
         observer.stop()
-    finally:
-        try:
-            observer.join()
-        except RuntimeError:
-            pass  # In case the src_path doesn't exist
+    observer.join()
 
 
 if __name__ == "__main__":
