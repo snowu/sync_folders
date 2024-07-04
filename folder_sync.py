@@ -128,7 +128,7 @@ def delete_folder(path_to_delete: str) -> None:
         logger.error(f"Error deleting folder {path_to_delete}: {e}")
 
 
-def checksum(filename: str) -> bytes:
+def file_checksum(filename: str) -> bytes:
     hash_obj = hashlib.md5()
     chunk_size = 8192
 
@@ -141,6 +141,20 @@ def checksum(filename: str) -> bytes:
     return hash_obj.hexdigest()
 
 
+def dir_checksum(directory):
+    hasher = hashlib.sha256()  # Or another algorithm of choice
+    for root, _, files in os.walk(directory):
+        for file in files:
+            file_path = os.path.join(root, file)
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(4096)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def is_same_file(src: str, dst: str):
     if not os.path.exists(dst):
         return False
@@ -150,7 +164,7 @@ def is_same_file(src: str, dst: str):
     if src_stat.st_size != dst_stat.st_size or src_stat.st_mtime != dst_stat.st_mtime:
         return False
 
-    return checksum(src) == checksum(dst)
+    return file_checksum(src) == file_checksum(dst)
 
 def copy_wrapper(src: str, dst: str) -> bool:
     if is_same_file(src, dst):
@@ -162,7 +176,10 @@ def copy_wrapper(src: str, dst: str) -> bool:
     return True
 
 def sync_folder(src: str, dst: str) -> None:
-    created_something = False
+    if dir_checksum(src) == dir_checksum(dst):
+        logger.info(f"CREATE: Skipping creation because {src} and {dst} are already synced")
+        return
+
     try:
         if not os.path.exists(dst):
             os.makedirs(dst)
@@ -176,7 +193,6 @@ def sync_folder(src: str, dst: str) -> None:
                 for name in dirs:
                     dst_path = os.path.join(dst_root, name)
                     if not os.path.exists(dst_path):
-                        created_something = True
                         os.makedirs(dst_path)
                         logger.info(f"CREATE: directory {dst_path}")
 
@@ -186,12 +202,8 @@ def sync_folder(src: str, dst: str) -> None:
                     futures.append(executor.submit(copy_wrapper, src_path, dst_path))
 
             for future in futures:
-                res = future.result()
-                if res and not created_something:
-                    created_something = True
+                future.result()
     
-        if not created_something:
-            logger.info(f"CREATE: Skipping creation because {src} and {dst} are already synced")
     except Exception as e:
         logger.error(f"Error in sync_folder: {e}")
 
