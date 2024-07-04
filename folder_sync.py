@@ -66,6 +66,7 @@ def dir_checksums(src: str, dst: str) -> None:
     return checksums
 
 def is_same_directory(src_path: str, dst_path: str) -> None:
+    logger.info("CHECKSUM: Calculating checksum of directories...")
     checksums = dir_checksums(src_path, dst_path)
     if checksums["src"] == checksums["dst"]:
         return True
@@ -270,6 +271,7 @@ def sync_folder(src: str, dst: str, checksum_dirs: bool = False) -> None:
                     dst_path = os.path.join(dst_root, name)
                     if not os.path.exists(dst_path):
                         os.makedirs(dst_path)
+                        copystat(root, dst_path)
                         logger.info(f"CREATE: directory {dst_path}")
 
                 for name in files:
