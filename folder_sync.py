@@ -14,9 +14,112 @@ from concurrent.futures import ThreadPoolExecutor
 
 MAX_WORKERS = 5
 
+# Helper functions
+
+def file_checksum(filename: str) -> bytes:
+    # After some tests, it appears md5 is faster for files, while sha256 is faster for directions. dir_checksum uses sha256 for that reason
+    hash_obj = hashlib.md5()
+    chunk_size = 8192
+
+    with open(filename, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            hash_obj.update(chunk)
+    return hash_obj.hexdigest()
+
+
+def dir_checksum(directory: str) -> bytes:
+    hash_obj = hashlib.sha256()
+    chunk_size = 8192
+    total_size = 0
+    for root, _, files in os.walk(directory):
+        for file in files:
+            file_path = os.path.join(root, file)
+            total_size += os.path.getsize(file_path)
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    hash_obj.update(chunk)
+    logger.info(f"CHECKSUM: {directory} : {total_size}")
+    return hash_obj.hexdigest()
+
+
+def is_same_directory(src_path: str, dst_path: str) -> None:
+    if dir_checksum(src_path) == dir_checksum(dst_path):
+        return True
+    return False
+
+
+def is_same_file(src: str, dst: str) -> bool:
+    if not os.path.exists(dst):
+        return False
+
+    src_stat = os.stat(src)
+    dst_stat = os.stat(dst)
+    if src_stat.st_size != dst_stat.st_size or src_stat.st_mtime != dst_stat.st_mtime:
+        return False
+
+    return file_checksum(src) == file_checksum(dst)
+
+
+def run_periodic_task(sync_interval: int) -> None:
+    while True:
+        schedule.run_pending()
+        sleep(sync_interval)
+
+
+def validate_paths(src_path: str, dst_path: str) -> bool:
+    if not os.path.exists(src_path):
+        logger.error(f"Src path does not exist: {src_path}")
+        return False
+
+    if src_path == dst_path:
+        logger.error(f"Same path passed in arguments: {src_path} == {dst_path}")
+        return False
+
+    return True
+
+
+def parse_arguments() -> None:
+    parser = argparse.ArgumentParser(
+        prog='folder_sync',
+        description='Synchronize folders and monitor for changes')
+    parser.add_argument('-s', '--source_path', type=str, required=True)
+    parser.add_argument('-d', '--destination_path', type=str, required=True)
+    parser.add_argument('-si', '--sync_interval', type=int, default=10)
+    parser.add_argument('-l', '--log_file', type=str, default='')
+    return parser.parse_args()
+
+
+def init_observer(src_path: str, dst_path: str) -> None:
+    global observer
+    observer = Observer()
+    event_handler = SyncHandler(src_path, dst_path)
+    observer.schedule(event_handler, src_path, recursive=True)
+    observer.start()
+
+
+def init_logger(log_file: str) -> None:
+    global logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    file_handler= logging.FileHandler(log_file)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
 
 class SyncHandler(FileSystemEventHandler):
-    def __init__(self, folder_to_monitor, folder_to_sync):
+    def __init__(self, folder_to_monitor: str, folder_to_sync: str):
         self.folder_to_monitor = folder_to_monitor
         self.folder_to_sync = folder_to_sync
 
@@ -27,6 +130,7 @@ class SyncHandler(FileSystemEventHandler):
             dest_rel_path = os.path.relpath(event.dest_path, self.folder_to_monitor)
             return (os.path.join(self.folder_to_sync, src_rel_path),
                     os.path.join(self.folder_to_sync, dest_rel_path))
+
         else: 
             rel_path = os.path.relpath(event.src_path, self.folder_to_monitor)
             return os.path.join(self.folder_to_sync, rel_path)
@@ -39,7 +143,7 @@ class SyncHandler(FileSystemEventHandler):
                 if event.is_directory:
                     sync_folder(event.src_path, dst_path)
                 else:
-                    copy_wrapper(event.src_path, dst_path)
+                    copy_file(event.src_path, dst_path)
         except FileNotFoundError:
             logger.error(f"on_created: File {event.src_path} not found")
         except PermissionError:
@@ -63,11 +167,14 @@ class SyncHandler(FileSystemEventHandler):
     def on_moved(self, event: FileSystemEvent) -> None:
         try:
             old_dst_path, new_dst_path = self.join_paths(event)
+
             if not os.path.exists(new_dst_path): 
+
                 if event.is_directory:
                     os.rename(old_dst_path, new_dst_path)
                     logger.info(f"MODIFY: Folder renamed from {old_dst_path} to {new_dst_path}")
                     return
+
                 else:
                     move(old_dst_path, new_dst_path)
                     logger.info(f"MODIFY: File moved from {old_dst_path} to {new_dst_path}")
@@ -79,7 +186,7 @@ class SyncHandler(FileSystemEventHandler):
 
 # Sync functions
 
-def delete_file(file_path):
+def delete_file(file_path: str) -> None:
     try:
         os.unlink(file_path)
         logger.info(f"DELETE: deleting file {file_path}")
@@ -92,6 +199,7 @@ def delete_folder(path_to_delete: str) -> None:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = []
             for root, dirs, files in os.walk(path_to_delete, topdown=False):
+
                 for name in files:
                     file_path = os.path.join(root, name)
                     if os.path.exists(file_path):
@@ -114,21 +222,17 @@ def delete_folder(path_to_delete: str) -> None:
         logger.error(f"Error deleting folder {path_to_delete}: {e}")
 
 
-def copy_wrapper(src: str, dst: str) -> bool:
+def copy_file(src: str, dst: str) -> None:
     if is_same_file(src, dst):
-        return False
+        return 
 
-    logger.info(f"COPY: file: {src} to {dst}")
     copy2(src, dst)
     copystat(src, dst)
-    return True
+    logger.info(f"COPY: file: {src} to {dst}")
 
 
-def sync_folder(src: str, dst: str) -> None:
+def sync_folder(src: str, dst: str, checksum_dirs: bool = False) -> None:
     try:
-        if dir_checksum(src) == dir_checksum(dst):
-            logger.info(f"CREATE: Skipping creation because {src} and {dst} are already synced")
-            return
         if not os.path.exists(dst):
             os.makedirs(dst)
 
@@ -147,122 +251,24 @@ def sync_folder(src: str, dst: str) -> None:
                 for name in files:
                     src_path = os.path.join(root, name)
                     dst_path = os.path.join(dst_root, name)
-                    futures.append(executor.submit(copy_wrapper, src_path, dst_path))
+                    futures.append(executor.submit(copy_file, src_path, dst_path))
 
             for future in futures:
                 future.result()
         
-        if dir_checksum(src) != dir_checksum(dst):
+        logger.info(f"SYNC: Synchronization between {src}:{dst} completed")
+        if checksum_dirs and dir_checksum(src) != dir_checksum(dst):
             logger.error("Checksum of directories is different")
             raise ValueError("Checksum of directories is different")
 
-        logger.info(f"Synchronization between {src}:{dst} completed")
     
     except Exception as e:
         logger.error(f"Error in sync_folder: {e}")
 
 
-# Helper functions
-
-def file_checksum(filename: str) -> bytes:
-    # After some tests, it appears md5 is faster for files, while sha256 is faster for directions. dir_checksum uses sha256 for that reason
-    hash_obj = hashlib.md5()
-    chunk_size = 8192
-
-    with open(filename, "rb") as f:
-        while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
-                break
-            hash_obj.update(chunk)
-    return hash_obj.hexdigest()
-
-
-def dir_checksum(directory):
-    hash_obj = hashlib.sha256()
-    chunk_size = 8192
-    total_size = 0
-    for root, _, files in os.walk(directory):
-        for file in files:
-            file_path = os.path.join(root, file)
-            total_size += os.path.getsize(file_path)
-            with open(file_path, 'rb') as f:
-                while True:
-                    chunk = f.read(chunk_size)
-                    if not chunk:
-                        break
-                    hash_obj.update(chunk)
-    logger.info(f"CHECKSUM: {directory} : {total_size}")
-    return hash_obj.hexdigest()
-
-
-def is_same_file(src: str, dst: str):
-    if not os.path.exists(dst):
-        return False
-
-    src_stat = os.stat(src)
-    dst_stat = os.stat(dst)
-    if src_stat.st_size != dst_stat.st_size or src_stat.st_mtime != dst_stat.st_mtime:
-        return False
-
-    return file_checksum(src) == file_checksum(dst)
-
-
-
-def run_periodic_task(sync_interval):
-    while True:
-        schedule.run_pending()
-        sleep(sync_interval)
-
-
-def validate_paths(src_path, dst_path):
-    if not os.path.exists(src_path):
-        logger.error(f"Src path does not exist: {src_path}")
-        return False
-
-    if src_path == dst_path:
-        logger.error(f"Same path passed in arguments: {src_path} == {dst_path}")
-        return False
-
-    return True
-
-
-def parse_arguments():
-    parser = argparse.ArgumentParser(
-        prog='folder_sync',
-        description='Synchronize folders and monitor for changes')
-    parser.add_argument('-s', '--source_path', type=str, required=True)
-    parser.add_argument('-d', '--destination_path', type=str, required=True)
-    parser.add_argument('-si', '--sync_interval', type=int, default=10)
-    parser.add_argument('-l', '--log_file', type=str, default='')
-    return parser.parse_args()
-
-
-def init_observer(src_path: str, dst_path: str):
-    global observer
-    observer = Observer()
-    event_handler = SyncHandler(src_path, dst_path)
-    observer.schedule(event_handler, src_path, recursive=True)
-    observer.start()
-
-
-def init_logger(log_file):
-    global logger
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
-
-    file_handler= logging.FileHandler(log_file)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
 # Main function
 
-def init_sync():
+def init_sync() -> None:
     args = parse_arguments()
     src_path = args.source_path
     #Get last segment of src_path so the script can create a new folder names exactly like src folder, inside dst folder
@@ -273,10 +279,15 @@ def init_sync():
     if not validate_paths(src_path, dst_path):
         return
 
+
     init_observer(src_path, dst_path)
 
-    sync_folder(src_path, dst_path)
-    schedule.every(args.sync_interval).seconds.do(sync_folder, src=src_path, dst=dst_path)
+    checksum_dirs = True
+    if is_same_directory(src_path, dst_path):
+        logger.info(f"CREATE: Skipping creation because {src_path} and {dst_path} are already synced")
+    else:
+        sync_folder(src_path, dst_path, checksum_dirs)
+    schedule.every(args.sync_interval).seconds.do(sync_folder, src=src_path, dst=dst_path, checksum_dirs=checksum_dirs)
 
     periodic_task_thread = Thread(target=run_periodic_task, args=(args.sync_interval,))
     periodic_task_thread.daemon = True
