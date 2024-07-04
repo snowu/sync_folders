@@ -183,9 +183,6 @@ def copy_wrapper(src: str, dst: str) -> bool:
     return True
 
 def sync_folder(src: str, dst: str) -> None:
-    if dir_checksum(src) == dir_checksum(dst):
-        logger.info(f"CREATE: Skipping creation because {src} and {dst} are already synced")
-        return
 
     try:
         if not os.path.exists(dst):
@@ -210,6 +207,12 @@ def sync_folder(src: str, dst: str) -> None:
 
             for future in futures:
                 future.result()
+        
+        if dir_checksum(src) != dir_checksum(dst):
+            logger.error("Checksum of directories is different")
+            raise ValueError("Checksum of directories is different")
+
+        logger.info(f"Synchronization between {src}:{dst} completed")
     
     except Exception as e:
         logger.error(f"Error in sync_folder: {e}")
@@ -232,9 +235,13 @@ if __name__ == "__main__":
         file_handler= logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-
-        if src_path == dst_path:
+        if not os.path.exists(src_path):
+            logger.error(f"Src path does not exist: {src_path} == {dst_path}")
+        elif src_path == dst_path:
             logger.error(f"Same path passed in arguments: {src_path} == {dst_path}")
+
+        elif dir_checksum(src_path) == dir_checksum(dst_path):
+            logger.info(f"CREATE: Skipping creation because {src_path} and {dst_path} are already synced")
         else:
             event_handler = SyncHandler(src_path, dst_path)
             observer.schedule(event_handler, src_path, recursive=True)
@@ -251,4 +258,8 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         observer.stop()
     finally:
-        observer.join()
+        try:
+            observer.join()
+        # In case the src_path doesn't exists
+        except RuntimeError:
+            pass
