@@ -3,12 +3,12 @@ import os
 import hashlib
 import argparse
 import logging
-from shutil import rmtree, copy2, copystat, move
-from time import sleep
+from shutil import copy2, copystat, move
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from watchdog.observers import Observer
-from threading import Timer
+# from threading import Timer
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 # Init parser for CLI args
 parser = argparse.ArgumentParser(
@@ -19,19 +19,22 @@ parser.add_argument('-d', '--destination_path', type=str, default='')
 parser.add_argument('-si', '--sync_interval', type=int, default=10)
 parser.add_argument('-l', '--log_file', type=str, default='')
 
+
+observer = Observer()
+
 # Init logger with agnostic settings. Settings related to log_file parameter are instantiated after the args are parsed
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
 logger.addHandler(stream_handler)
 
 class SyncHandler(FileSystemEventHandler):
-    def __init__(self, folder_to_monitor, folder_to_sync, observer):
+    def __init__(self, folder_to_monitor, folder_to_sync):
         self.folder_to_monitor = folder_to_monitor
         self.folder_to_sync = folder_to_sync
-        self.observer = observer
+
 
     def join_paths(self, event: FileSystemEvent) -> os.path:
         if event.event_type == "moved":  
@@ -43,33 +46,30 @@ class SyncHandler(FileSystemEventHandler):
             rel_path = os.path.relpath(event.src_path, self.folder_to_monitor)
             return os.path.join(self.folder_to_sync, rel_path)
 
+
     def on_created(self, event: FileSystemEvent) -> None:
         try:
             dst_path = self.join_paths(event)
             if not os.path.exists(dst_path): 
                 if event.is_directory:
                     sync_folder(event.src_path, dst_path)
-                    return
-                copy_wrapper(event.src_path, dst_path)
-            else:
-                logger.info(f"SKIP: file {event.src_path} already present in {dst_path}")
-                return
+                else:
+                    copy_wrapper(event.src_path, dst_path)
         except FileNotFoundError:
-            logging.error(f"on_created: File {event.src_path} not found")
+            logger.error(f"on_created: File {event.src_path} not found")
+
 
     def on_deleted(self, event: FileSystemEvent) -> None:
         try:
             dst_path = self.join_paths(event)
             # event.is_directory works strangely here. Even tho the event is triggered when a folder is deleted, a file event handler is passed
             if os.path.isdir(dst_path):
-                logger.info(f"DELETE: Folder in {event.src_path} was deleted, updating synced folder {dst_path}")
                 delete_folder(dst_path)
-                # rmtree(dst_path)
             else:
-                logger.info(f"DELETE: File in {event.src_path} was deleted, updating synced folder {dst_path}")
-                os.remove(dst_path)
+                delete_file(dst_path)
         except FileNotFoundError:
-            logging.error(f"on_deleted: File {event.src_path} not found")
+            logger.error(f"on_deleted: File {event.src_path} not found")
+
         
     def on_moved(self, event: FileSystemEvent) -> None:
         try:
@@ -84,7 +84,42 @@ class SyncHandler(FileSystemEventHandler):
                 logger.info(f"MODIFY: File moved from {old_dst_path} to {new_dst_path}")
 
         except FileNotFoundError:
-            logging.error(f"on_created: File {event.src_path} not found")
+            logger.error(f"on_moved: File {event.src_path} not found")
+
+
+def delete_file(file_path):
+    try:
+        os.unlink(file_path)
+        logger.info(f"DELETE: deleting file {file_path}")
+    except Exception as e:
+        logger.error(f"Error deleting file {file_path}: {e}")
+
+
+def delete_folder(path_to_delete: str) -> None:
+    try:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for root, dirs, files in os.walk(path_to_delete, topdown=False):
+                for name in files:
+                    file_path = os.path.join(root, name)
+                    futures.append(executor.submit(delete_file, file_path))
+            
+            for future in futures:
+                future.result()
+                
+            for name in dirs:
+                dst_path = os.path.join(root, name)
+                try:
+                    os.rmdir(dst_path)
+                    logger.info(f"DELETE: deleting directory {dst_path}")
+                except Exception as e:
+                    logger.error(f"Error deleting directory {dst_path}: {e}")
+            
+            os.rmdir(path_to_delete)
+
+    except Exception as e:
+        logger.error(f"Error deleting folder {path_to_delete}: {e}")
+
 
 def checksum(filename: str) -> bytes:
     hash_obj = hashlib.md5()
@@ -98,6 +133,7 @@ def checksum(filename: str) -> bytes:
             hash_obj.update(chunk)
     return hash_obj.hexdigest()
 
+
 def is_same_file(src: str, dst: str):
     if not os.path.exists(dst):
         return False
@@ -109,74 +145,67 @@ def is_same_file(src: str, dst: str):
 
     return checksum(src) == checksum(dst)
 
-def copy_wrapper(src: str, dst: str) -> None:
-    if os.path.exists(dst) or is_same_file(src, dst):
-        logger.info(f"SKIP: file {src} already present in {dst}")
-        return
+def copy_wrapper(src: str, dst: str) -> bool:
+    if is_same_file(src, dst):
+        return False
 
     logger.info(f"COPY: file: {src} to {dst}")
     copy2(src, dst)
     copystat(src, dst)
-
-def delete_folder(path_to_delete: str) -> None:
-    try:
-        items = os.listdir(path_to_delete)
-        for item in items:
-            dst_path = os.path.join(path_to_delete, item)
-            if os.path.isdir(dst_path):
-                logger.info(f"DELETE: File deleted {dst_path}")
-                delete_folder(dst_path)
-            else:
-                logger.info(f"DELETE: File deleted {dst_path}")
-                os.remove(dst_path)
-        rmtree(path_to_delete)
-
-    except FileNotFoundError:
-        logging.error("FileNotFoundError")
+    return True
 
 def sync_folder(src: str, dst: str) -> None:
-    if not os.path.exists(dst):
-        logger.info(f"CREATE: new directory: {dst}")
-        os.makedirs(dst)
-    else:
-        logger.info(f"SKIP: skipping creation because {dst} already exists")
-
+    created_something = False
     try:
-        items = os.listdir(src)
-        for item in items:
-            src_path =  os.path.join(src, item)
-            dst_path = os.path.join(dst, item)
-            if os.path.isdir(src_path):
-                sync_folder(src_path, dst_path)
-            else:
-                copy_wrapper(src_path, dst_path)
+        if not os.path.exists(dst):
+            os.makedirs(dst)
 
-    except FileNotFoundError:
-        logging.error("FileNotFoundError")
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for root, dirs, files in os.walk(src):
+                rel_path = os.path.relpath(root, src)
+                dst_root = os.path.join(dst, rel_path)
+
+                for name in dirs:
+                    dst_path = os.path.join(dst_root, name)
+                    if not os.path.exists(dst_path):
+                        created_something = True
+                        os.makedirs(dst_path)
+                        logger.info(f"CREATE: directory {dst_path}")
+
+                for name in files:
+                    src_path = os.path.join(root, name)
+                    dst_path = os.path.join(dst_root, name)
+                    futures.append(executor.submit(copy_wrapper, src_path, dst_path))
+
+            for future in futures:
+                res = future.result()
+                if res and not created_something:
+                    created_something = True
+    
+        if not created_something:
+            logger.info(f"CREATE: Skipping creation because {src} and {dst} are already synced")
+    except Exception as e:
+        logger.error(f"Error in sync_folder: {e}")
+
 
 if __name__ == "__main__":
 
     args = parser.parse_args()
-    original_src = args.source_path
-    original_dst = args.destination_path
+    src_path = args.source_path
+    dst_path = args.destination_path
+    dst_path = str(Path(args.destination_path).joinpath(Path(src_path).parts[-1]))
     log_file = args.log_file
     sync_interval = args.sync_interval
-    src_path = Path(original_src)
-    # Get the last segment of the src path to append to dst to recreate an exact copy of the src folder, inside dst.
-    # So, if src = D:\original_folder_name and dst = D:\copy, the synced folder will be at path D:\copy\original_folder_name
-    dst_path = Path(original_dst).joinpath(src_path.parts[-1])
 
     file_handler= logging.FileHandler(log_file)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-    if original_src == original_dst:
-        logger.error(f"Same path passed in arguments: {original_src} == {original_dst}")
-    elif src_path == dst_path:
-        logger.error(f"Destination folder will be inside source folder: {src_path} == {dst_path}")
+    if src_path == dst_path:
+        logger.error(f"Same path passed in arguments: {src_path} == {dst_path}")
     else:
-        observer = Observer()
-        event_handler = SyncHandler(src_path, dst_path, observer)
+        event_handler = SyncHandler(src_path, dst_path)
         observer.schedule(event_handler, src_path, recursive=True)
         observer.start()
         sync_folder(src_path, dst_path)
