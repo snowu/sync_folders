@@ -153,11 +153,15 @@ class SyncHandler(FileSystemEventHandler):
     def on_deleted(self, event: FileSystemEvent) -> None:
         try:
             dst_path = self.join_paths(event)
-            # event.is_directory works strangely here. Even tho the event is triggered when a folder is deleted, a file event handler is passed
+            # FileDeletedEvent(src_path='C:\\Users\\zanca\\Desktop\\veeam_test\\python', dest_path='', event_type='deleted', is_directory=False, is_synthetic=False)
+            # DirCreatedEvent( src_path='C:\\Users\\zanca\\Desktop\\veeam_test\\python', dest_path='', event_type='created', is_directory=True, is_synthetic=False)
+            # event.is_directory works strangely here. Even tho the event is triggered when a folder is deleted, is_directory=False
+            # Same path, same folder but events triggered are different.
             if os.path.isdir(dst_path):
                 delete_folder(dst_path)
             else:
                 delete_file(dst_path)
+
         except FileNotFoundError:
             logger.error(f"on_deleted: File {event.src_path} not found")
         except PermissionError:
@@ -260,7 +264,6 @@ def sync_folder(src: str, dst: str, checksum_dirs: bool = False) -> None:
         if checksum_dirs and dir_checksum(src) != dir_checksum(dst):
             logger.error("Checksum of directories is different")
             raise ValueError("Checksum of directories is different")
-
     
     except Exception as e:
         logger.error(f"Error in sync_folder: {e}")
@@ -271,14 +274,13 @@ def sync_folder(src: str, dst: str, checksum_dirs: bool = False) -> None:
 def init_sync() -> None:
     args = parse_arguments()
     src_path = args.source_path
-    #Get last segment of src_path so the script can create a new folder names exactly like src folder, inside dst folder
+    # Get last segment of src_path so the script can create a new folder names exactly like src folder, inside dst folder
     dst_path = str(Path(args.destination_path).joinpath(Path(src_path).parts[-1]))
 
     init_logger(args.log_file)
 
     if not validate_paths(src_path, dst_path):
         return
-
 
     init_observer(src_path, dst_path)
 
