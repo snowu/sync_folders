@@ -11,6 +11,8 @@ from time import sleep
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+MAX_WORKERS = 5
+
 # Init parser for CLI args
 parser = argparse.ArgumentParser(
     prog='top',
@@ -103,7 +105,7 @@ def delete_file(file_path):
 
 def delete_folder(path_to_delete: str) -> None:
     try:
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = []
             for root, dirs, files in os.walk(path_to_delete, topdown=False):
                 for name in files:
@@ -129,6 +131,7 @@ def delete_folder(path_to_delete: str) -> None:
 
 
 def file_checksum(filename: str) -> bytes:
+    # After some tests, it appears md5 is faster for files, while sha256 is faster for directions. dir_checksum uses sha256 for that reason
     hash_obj = hashlib.md5()
     chunk_size = 8192
 
@@ -142,7 +145,7 @@ def file_checksum(filename: str) -> bytes:
 
 
 def dir_checksum(directory):
-    hasher = hashlib.sha256()  # Or another algorithm of choice
+    hash_obj = hashlib.sha256()
     for root, _, files in os.walk(directory):
         for file in files:
             file_path = os.path.join(root, file)
@@ -151,8 +154,8 @@ def dir_checksum(directory):
                     chunk = f.read(4096)
                     if not chunk:
                         break
-                    hasher.update(chunk)
-    return hasher.hexdigest()
+                    hash_obj.update(chunk)
+    return hash_obj.hexdigest()
 
 
 def is_same_file(src: str, dst: str):
@@ -184,7 +187,7 @@ def sync_folder(src: str, dst: str) -> None:
         if not os.path.exists(dst):
             os.makedirs(dst)
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = []
             for root, dirs, files in os.walk(src):
                 rel_path = os.path.relpath(root, src)
