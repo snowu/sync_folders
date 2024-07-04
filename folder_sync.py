@@ -52,7 +52,9 @@ class SyncHandler(FileSystemEventHandler):
             dst_path = self.join_paths(event)
             if not os.path.exists(dst_path): 
                 if event.is_directory:
+                    import time; start = time.time()
                     sync_folder(event.src_path, dst_path)
+                    print(time.time() - start); breakpoint
                 else:
                     copy_wrapper(event.src_path, dst_path)
         except FileNotFoundError:
@@ -64,7 +66,9 @@ class SyncHandler(FileSystemEventHandler):
             dst_path = self.join_paths(event)
             # event.is_directory works strangely here. Even tho the event is triggered when a folder is deleted, a file event handler is passed
             if os.path.isdir(dst_path):
+                import time; start = time.time()
                 delete_folder(dst_path)
+                print(time.time() - start); breakpoint
             else:
                 delete_file(dst_path)
         except FileNotFoundError:
@@ -208,7 +212,9 @@ if __name__ == "__main__":
         event_handler = SyncHandler(src_path, dst_path)
         observer.schedule(event_handler, src_path, recursive=True)
         observer.start()
+        import time; start = time.time()
         sync_folder(src_path, dst_path)
+        print(time.time() - start); breakpoint
         schedule.every(sync_interval).seconds.do(sync_folder, src=src_path, dst=dst_path)
         try:
             while True:
