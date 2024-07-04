@@ -64,7 +64,7 @@ def file_checksum(filename: str) -> bytes:
     return hash_obj.hexdigest()
 
 
-def dir_checksums(src: str, dst: str) -> None:
+def dir_checksums(src: str, dst: str, return_bytes: bool = False) -> None:
 
     def _dir_checksum(directory: str) -> bytes:
         hash_obj = hashlib.sha256()
@@ -84,9 +84,11 @@ def dir_checksums(src: str, dst: str) -> None:
                         hash_obj.update(chunk)
 
         logger.info(f"CHECKSUM: {directory} : {total_size}")
+        if return_bytes:
+            return total_size
         return hash_obj.hexdigest()
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures, checksums = {}, {}
         futures[executor.submit(_dir_checksum, src)] = "src"
         futures[executor.submit(_dir_checksum, dst)] = "dst"
@@ -287,8 +289,8 @@ def sync_folder(src: str, dst: str, checksum_dirs: bool = False) -> None:
             logger.info(f"SYNC: Synchronization between {src}:{dst} completed")
             if checksum_dirs: 
                 logger.info("CHECKSUM: Calculating checksum of directories...")
-                checksums = dir_checksums(src, dst)
-                if checksums["dst"] > checksums["src"]:
+                checksums = dir_checksums(src, dst, return_bytes = True)
+                if checksums["src"] and checksums["dst"] > checksums["src"]:
                     logger.info("CHECKSUM: dst size > src size, deleting dst and launching sync again")
                     delete_folder(dst)
                     sync_folder(src, dst, checksum_dirs)
@@ -314,7 +316,7 @@ def init_sync() -> None:
 
     checksum_dirs = True
     if is_same_directory(src_path, dst_path):
-        logger.info(f"CREATE: Skipping creation because {src_path} and {dst_path} are already synced")
+        logger.info(f"CREATE: Skipping sync because {src_path} and {dst_path} are already synced")
     else:
         sync_folder(src_path, dst_path, checksum_dirs)
     schedule.every(args.sync_interval).seconds.do(sync_folder, src=src_path, dst=dst_path, checksum_dirs=checksum_dirs)
