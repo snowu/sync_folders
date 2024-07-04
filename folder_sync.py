@@ -13,44 +13,63 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 MAX_WORKERS = 5
+CHUNK_SIZE = 8192
 
 # Helper functions
 
 def file_checksum(filename: str) -> bytes:
     # After some tests, it appears md5 is faster for files, while sha256 is faster for directions. dir_checksum uses sha256 for that reason
     hash_obj = hashlib.md5()
-    chunk_size = 8192
 
     with open(filename, "rb") as f:
         while True:
-            chunk = f.read(chunk_size)
+            chunk = f.read(CHUNK_SIZE)
             if not chunk:
                 break
             hash_obj.update(chunk)
     return hash_obj.hexdigest()
 
 
-def dir_checksum(directory: str) -> bytes:
-    hash_obj = hashlib.sha256()
-    chunk_size = 8192
-    total_size = 0
-    for root, _, files in os.walk(directory):
-        for file in files:
-            file_path = os.path.join(root, file)
-            total_size += os.path.getsize(file_path)
-            with open(file_path, 'rb') as f:
-                while True:
-                    chunk = f.read(chunk_size)
-                    if not chunk:
-                        break
-                    hash_obj.update(chunk)
-    logger.info(f"CHECKSUM: {directory} : {total_size}")
-    return hash_obj.hexdigest()
+def dir_checksums(src: str, dst: str) -> None:
 
+    def _dir_checksum(directory: str) -> bytes:
+        hash_obj = hashlib.sha256()
+        total_size = 0
+
+        for root, _, files in os.walk(directory):
+
+            for file in files:
+                file_path = os.path.join(root, file)
+                total_size += os.path.getsize(file_path)
+
+                with open(file_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        hash_obj.update(chunk)
+
+        logger.info(f"CHECKSUM: {directory} : {total_size}")
+        return hash_obj.hexdigest()
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures, checksums = {}, {}
+        futures[executor.submit(_dir_checksum, src)] = "src"
+        futures[executor.submit(_dir_checksum, dst)] = "dst"
+        for future in futures:
+            dir_type = futures[future]
+            try:
+                checksums[dir_type] = future.result()
+            except Exception as exc:
+                logger.error(f"CHECKSUM: {dir_type} directory error: {exc}")
+
+    return checksums
 
 def is_same_directory(src_path: str, dst_path: str) -> None:
-    if dir_checksum(src_path) == dir_checksum(dst_path):
+    checksums = dir_checksums(src_path, dst_path)
+    if checksums["src"] == checksums["dst"]:
         return True
+
     return False
 
 
@@ -97,8 +116,8 @@ def parse_arguments() -> None:
 
 def init_observer(src_path: str, dst_path: str) -> None:
     global observer
-    observer = Observer()
     event_handler = SyncHandler(src_path, dst_path)
+    observer = Observer()
     observer.schedule(event_handler, src_path, recursive=True)
     observer.start()
 
@@ -144,6 +163,7 @@ class SyncHandler(FileSystemEventHandler):
                     sync_folder(event.src_path, dst_path)
                 else:
                     copy_file(event.src_path, dst_path)
+
         except FileNotFoundError:
             logger.error(f"on_created: File {event.src_path} not found")
         except PermissionError:
@@ -257,13 +277,18 @@ def sync_folder(src: str, dst: str, checksum_dirs: bool = False) -> None:
                     dst_path = os.path.join(dst_root, name)
                     futures.append(executor.submit(copy_file, src_path, dst_path))
 
-            for future in futures:
-                future.result()
+                for future in futures:
+                    future.result()
         
-        logger.info(f"SYNC: Synchronization between {src}:{dst} completed")
-        if checksum_dirs and dir_checksum(src) != dir_checksum(dst):
-            logger.error("Checksum of directories is different")
-            raise ValueError("Checksum of directories is different")
+            checksums = {}
+            logger.info(f"SYNC: Synchronization between {src}:{dst} completed")
+            if checksum_dirs: 
+                logger.info("CHECKSUM: Calculating checksum of directories...")
+                checksums = dir_checksums(src, dst)
+                if checksums["dst"] > checksums["src"]:
+                    logger.info("CHECKSUM: dst size > src size, deleting dst and launching sync again")
+                    delete_folder(dst)
+                    sync_folder(src, dst, checksum_dirs)
     
     except Exception as e:
         logger.error(f"Error in sync_folder: {e}")
