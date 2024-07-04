@@ -17,6 +17,40 @@ CHUNK_SIZE = 8192
 
 # Helper functions
 
+def parse_arguments() -> None:
+    parser = argparse.ArgumentParser(
+        prog='folder_sync',
+        description='Synchronize folders and monitor for changes')
+    parser.add_argument('-s', '--source_path', type=str, required=True)
+    parser.add_argument('-d', '--destination_path', type=str, required=True)
+    parser.add_argument('-si', '--sync_interval', type=int, default=10)
+    parser.add_argument('-l', '--log_file', type=str, default='')
+    return parser.parse_args()
+
+
+def init_observer(src_path: str, dst_path: str) -> None:
+    global observer
+    event_handler = SyncHandler(src_path, dst_path)
+    observer = Observer()
+    observer.schedule(event_handler, src_path, recursive=True)
+    observer.start()
+
+
+def init_logger(log_file: str) -> None:
+    global logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    file_handler= logging.FileHandler(log_file)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+
 def file_checksum(filename: str) -> bytes:
     # After some tests, it appears md5 is faster for files, while sha256 is faster for directions. dir_checksum uses sha256 for that reason
     hash_obj = hashlib.md5()
@@ -65,6 +99,7 @@ def dir_checksums(src: str, dst: str) -> None:
 
     return checksums
 
+
 def is_same_directory(src_path: str, dst_path: str) -> None:
     logger.info("CHECKSUM: Calculating checksum of directories...")
     checksums = dir_checksums(src_path, dst_path)
@@ -102,40 +137,6 @@ def validate_paths(src_path: str, dst_path: str) -> bool:
         return False
 
     return True
-
-
-def parse_arguments() -> None:
-    parser = argparse.ArgumentParser(
-        prog='folder_sync',
-        description='Synchronize folders and monitor for changes')
-    parser.add_argument('-s', '--source_path', type=str, required=True)
-    parser.add_argument('-d', '--destination_path', type=str, required=True)
-    parser.add_argument('-si', '--sync_interval', type=int, default=10)
-    parser.add_argument('-l', '--log_file', type=str, default='')
-    return parser.parse_args()
-
-
-def init_observer(src_path: str, dst_path: str) -> None:
-    global observer
-    event_handler = SyncHandler(src_path, dst_path)
-    observer = Observer()
-    observer.schedule(event_handler, src_path, recursive=True)
-    observer.start()
-
-
-def init_logger(log_file: str) -> None:
-    global logger
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
-
-    file_handler= logging.FileHandler(log_file)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
 
 
 class SyncHandler(FileSystemEventHandler):
