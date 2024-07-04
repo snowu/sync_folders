@@ -11,6 +11,7 @@ from time import sleep
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+
 MAX_WORKERS = 5
 
 # Init parser for CLI args
@@ -37,6 +38,7 @@ class SyncHandler(FileSystemEventHandler):
     def __init__(self, folder_to_monitor, folder_to_sync):
         self.folder_to_monitor = folder_to_monitor
         self.folder_to_sync = folder_to_sync
+
 
     def join_paths(self, event: FileSystemEvent) -> os.path:
         if event.event_type == "moved":  
@@ -173,6 +175,7 @@ def is_same_file(src: str, dst: str):
 
     return file_checksum(src) == file_checksum(dst)
 
+
 def copy_wrapper(src: str, dst: str) -> bool:
     if is_same_file(src, dst):
         return False
@@ -181,6 +184,7 @@ def copy_wrapper(src: str, dst: str) -> bool:
     copy2(src, dst)
     copystat(src, dst)
     return True
+
 
 def sync_folder(src: str, dst: str) -> None:
 
@@ -217,10 +221,12 @@ def sync_folder(src: str, dst: str) -> None:
     except Exception as e:
         logger.error(f"Error in sync_folder: {e}")
 
+
 def run_periodic_task(sync_interval):
     while True:
         schedule.run_pending()
         sleep(sync_interval)
+
 
 if __name__ == "__main__":
 
@@ -235,11 +241,11 @@ if __name__ == "__main__":
         file_handler= logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
+
         if not os.path.exists(src_path):
             logger.error(f"Src path does not exist: {src_path} == {dst_path}")
         elif src_path == dst_path:
             logger.error(f"Same path passed in arguments: {src_path} == {dst_path}")
-
         elif dir_checksum(src_path) == dir_checksum(dst_path):
             logger.info(f"CREATE: Skipping creation because {src_path} and {dst_path} are already synced")
         else:
@@ -253,8 +259,10 @@ if __name__ == "__main__":
             periodic_task_thread = Thread(target=run_periodic_task, args=(sync_interval,))
             periodic_task_thread.daemon = True
             periodic_task_thread.start()
+
             while True:
                 sleep(1)
+
     except KeyboardInterrupt:
         observer.stop()
     finally:
