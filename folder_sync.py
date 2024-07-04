@@ -20,7 +20,7 @@ parser.add_argument('-d', '--destination_path', type=str, default='')
 parser.add_argument('-si', '--sync_interval', type=int, default=10)
 parser.add_argument('-l', '--log_file', type=str, default='')
 
-
+# Init observer
 observer = Observer()
 
 # Init logger with agnostic settings. Settings related to log_file parameter are instantiated after the args are parsed
@@ -54,11 +54,11 @@ class SyncHandler(FileSystemEventHandler):
                 if event.is_directory:
                     sync_folder(event.src_path, dst_path)
                 else:
-                    import time
-                    time.sleep(0.01)
                     copy_wrapper(event.src_path, dst_path)
         except FileNotFoundError:
             logger.error(f"on_created: File {event.src_path} not found")
+        except PermissionError:
+            self.on_created(event)
 
 
     def on_deleted(self, event: FileSystemEvent) -> None:
@@ -71,6 +71,8 @@ class SyncHandler(FileSystemEventHandler):
                 delete_file(dst_path)
         except FileNotFoundError:
             logger.error(f"on_deleted: File {event.src_path} not found")
+        except PermissionError:
+            self.on_deleted(event)
 
         
     def on_moved(self, event: FileSystemEvent) -> None:
@@ -87,19 +89,19 @@ class SyncHandler(FileSystemEventHandler):
 
         except FileNotFoundError:
             logger.error(f"on_moved: File {event.src_path} not found")
+        except PermissionError:
+            self.on_moved(event)
 
 
 def delete_file(file_path):
     try:
         os.unlink(file_path)
         logger.info(f"DELETE: deleting file {file_path}")
-        # return file_path
     except Exception as e:
         logger.error(f"Error deleting file {file_path}: {e}")
 
 
 def delete_folder(path_to_delete: str) -> None:
-    # deleted_files = []
     try:
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
@@ -110,9 +112,7 @@ def delete_folder(path_to_delete: str) -> None:
                         futures.append(executor.submit(delete_file, file_path))
             
                 for future in futures:
-                    res = future.result()
-                    # if res:
-                        # deleted_files.append(res)
+                    future.result()
                 
                 for name in dirs:
                     dst_path = os.path.join(root, name)
@@ -123,9 +123,6 @@ def delete_folder(path_to_delete: str) -> None:
                         logger.error(f"Error deleting directory {dst_path}: {e}")
                 
             os.rmdir(path_to_delete)
-
-        # if deleted_files:
-        #     logger.info(f"{'\n DELETE: deleted file: '.join(deleted_files)}")
 
     except Exception as e:
         logger.error(f"Error deleting folder {path_to_delete}: {e}")
@@ -202,7 +199,6 @@ def run_periodic_task():
     while True:
         schedule.run_pending()
         sleep(0.1)
-
 
 if __name__ == "__main__":
 
