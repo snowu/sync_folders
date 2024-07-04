@@ -63,7 +63,6 @@ class SyncHandler(FileSystemEventHandler):
     def on_moved(self, event: FileSystemEvent) -> None:
         try:
             old_dst_path, new_dst_path = self.join_paths(event)
-            breakpoint()
             if not os.path.exists(new_dst_path): 
                 if event.is_directory:
                     os.rename(old_dst_path, new_dst_path)
